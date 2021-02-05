@@ -50,7 +50,9 @@
 import io from 'socket.io-client';
 const config = {
 	'iceServers': [{
-        'urls': ['stun:stun.l.google.com:19302']
+        'urls': [
+            'stun:stun.l.google.com:19302'
+        ]
     }],
     'iceTransports': 'relay'
 }
@@ -71,6 +73,9 @@ export default {
         messageView: false,
         message: '',
         timeout: 2000,
+        recorderOptions: {},
+        mediaRecorder: {},
+        recordedChunks: []
     }),
     methods: {
         socketInit() {
@@ -111,11 +116,14 @@ export default {
                         navigator.mediaDevices.getUserMedia(constraints)
                         .then((stream) => {
                             self.video.srcObject = stream;
+                            self.mediaRecorder = new MediaRecorder(stream, self.recorderOptions);
+                            self.mediaRecorder.ondataavailable = this.streamDataHandler;
+                            self.mediaRecorder.start();
                             self.socket.emit('broadcaster');
                         })
                     } else { console.log('Camera is not accessible') }
                 } else {
-                    self.errorText = 'There is an online broadcaster rightnow'
+                    self.errorText = 'There is an online broadcaster right now'
                     self.errorView = true;
                 }
             })
@@ -134,9 +142,10 @@ export default {
         play() {
             const self = this;
             if ( !self.isOnline ) {
-                self.socket = io.connect('http://localhost:3000/primary', {reconnect: true, transports: ['websocket']})
+                self.socket = io.connect('https://signaling.streamerdevelopment.com/primary', {reconnect: true, transports: ['websocket']})
                 self.socketInit();
             } else {
+                // Clean buffer
                 self.stop();
             }
             self.isOnline = !self.isOnline;
@@ -146,10 +155,27 @@ export default {
             self.socket.disconnect();
             self.video.srcObject && self.video.srcObject.getTracks().map(t => t.stop())
             self.video.load();
+            self.mediaRecorder.stop();
+        },
+        streamDataHandler(event) {
+          if ( event.data.size > 0 ) {
+            this.recordedChunks.push(event.data);
+            this.saveRecordedVideo();
+          }
+        },
+        saveRecordedVideo() {
+          const newFile = new File(this.recordedChunks, `recorded_vide::${new Date().toString()}.webm`, { type: 'video/webm', lastModified: new Date().getTime() });
+          const payload = new FormData();
+          payload.append('video', newFile);
+          let xhrRequest = new XMLHttpRequest();
+          xhrRequest.open('POST', 'http://localhost:4000/upload');
+          xhrRequest.send(payload);
+          this.recordedChunks = [];
         }
     },
     mounted() {
         this.video = this.$refs.video;
+        this.recorderOptions = { mimeType: 'video/webm' };
     },
     beforeDestroy() {
         console.log('bye');
